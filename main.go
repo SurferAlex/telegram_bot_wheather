@@ -13,11 +13,18 @@ import (
 
 type WeatherResponse struct {
 	Main struct {
-		Temp float64 `json:"temp"`
+		Temp     float64 `json:"temp"`
+		Humidity int     `json:"humidity"`
 	} `json:"main"`
 	Weather []struct {
 		Description string `json:"description"`
 	} `json:"weather"`
+	Wind struct {
+		Speed float64 `json:"speed"`
+	} `json:"wind"`
+	Rain struct {
+		OneHour float64 `json:"1h"`
+	} `json:"rain"`
 }
 
 func main() {
@@ -37,9 +44,11 @@ func main() {
 	log.Printf("Бот авторизован как %s", bot.Self.UserName)
 
 	updateConfig := tgbotapi.NewUpdate(0)
-	updateConfig.Timeout = 60
 
 	updates := bot.GetUpdatesChan(updateConfig)
+
+	// Создаем карту для отслеживания состояния пользователей
+	userStates := make(map[int64]string)
 
 	// Обработка сообщений
 	for update := range updates {
@@ -48,42 +57,42 @@ func main() {
 		}
 
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "")
+		chatID := update.Message.Chat.ID
 
-		switch update.Message.Text {
-		case "/weather":
-			weather := getWeather()
+		command := update.Message.Command()
+		text := update.Message.Text
+
+		switch {
+		case command == "start":
+			msg.Text = "Привет! Я бот погоды.\nИспользуйте команду /weather для получения погоды."
+
+		case command == "weather":
+			userStates[chatID] = "awaiting_city"
+			msg.Text = "Укажите город."
+
+		case command == "help":
+			msg.Text = "Доступные команды:\n" +
+				"/weather - узнать погоду\n" +
+				"/help - показать это сообщение"
+
+		case userStates[chatID] == "awaiting_city":
+			weather := getWeather(text)
 			msg.Text = weather
-		case "/photo":
-			resp, err := http.Get("https://www.zoo-mega.ru/_mod_files/ce_images/news/107-min.jpg")
-			if err != nil {
-				log.Println(err)
-				msg.Text = "Не могу получить фото :("
-				break
-			}
-			func() {
-				defer resp.Body.Close()
-				photo := tgbotapi.NewPhoto(update.Message.Chat.ID, tgbotapi.FileReader{
-					Name:   "photo.jpg",
-					Reader: resp.Body,
-				})
-				_, err = bot.Send(photo)
-			}()
-			if err != nil {
-				log.Println(err)
-				msg.Text = "Не могу отправить фото :("
-			}
+			delete(userStates, chatID)
+
 		default:
-			msg.Text = "Используйте /weather для получения информации о погоде"
+			msg.Text = "Используйте команду /weather для получения погоды"
 		}
 
-		bot.Send(msg)
+		if _, err := bot.Send(msg); err != nil {
+			log.Printf("Ошибка отправки сообщения: %v", err)
+		}
 	}
 }
 
-func getWeather() string {
+func getWeather(city string) string {
 	weatherApiKey := os.Getenv("WEATHER_API_KEY")
-	// Здесь используется Москва как пример (можно изменить город)
-	url := fmt.Sprintf("http://api.openweathermap.org/data/2.5/weather?q=Moscow&appid=%s&units=metric", weatherApiKey)
+	url := fmt.Sprintf("http://api.openweathermap.org/data/2.5/weather?q=%s&appid=%s&units=metric&lang=ru", city, weatherApiKey)
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -91,12 +100,30 @@ func getWeather() string {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return "Город не найден. Проверьте правильность написания."
+	}
+
 	var weather WeatherResponse
 	if err := json.NewDecoder(resp.Body).Decode(&weather); err != nil {
 		return "Ошибка при обработке данных о погоде"
 	}
 
-	return fmt.Sprintf("Температура: %.1f°C\nПогода: %s",
+	rainInfo := "нет"
+	if weather.Rain.OneHour > 0 {
+		rainInfo = fmt.Sprintf("%.1f мм/ч", weather.Rain.OneHour)
+	}
+
+	return fmt.Sprintf("Погода в %s:\n"+
+		"🌡 Температура: %.1f°C\n"+
+		"💨 Ветер: %.1f м/с\n"+
+		"💧 Влажность: %d%%\n"+
+		"🌧 Осадки: %s\n"+
+		"☁️ Условия: %s",
+		city,
 		weather.Main.Temp,
+		weather.Wind.Speed,
+		weather.Main.Humidity,
+		rainInfo,
 		weather.Weather[0].Description)
 }
