@@ -64,7 +64,7 @@ func main() {
 
 		switch {
 		case command == "start":
-			msg.Text = "Привет! Я бот погоды.\nИспользуйте команду /weather для получения погоды."
+			msg.Text = "Привет! Я бот погоды."
 
 		case command == "weather":
 			userStates[chatID] = "awaiting_city"
@@ -90,6 +90,7 @@ func main() {
 	}
 }
 
+// Добавили env
 func getWeather(city string) string {
 	weatherApiKey := os.Getenv("WEATHER_API_KEY")
 	url := fmt.Sprintf("http://api.openweathermap.org/data/2.5/weather?q=%s&appid=%s&units=metric&lang=ru", city, weatherApiKey)
